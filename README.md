@@ -132,10 +132,12 @@ prompt_suffix = "Express frustration but stay in character. Imply you'll try aga
 
 Behavior:
 
-- `backup_ok` facts include backup size/file count, plus latest `journalctl -u <service> -n 1` line.
-- `backup_fail` facts include failure context plus latest `journalctl -u <service> -n 1` line.
+- `backup_ok` and `backup_fail` include logs from the full latest service run (start to finish) using the current systemd `InvocationID` when available.
+- If `InvocationID` is unavailable, compusona falls back to a recent `journalctl -u <service>` window.
 - If `service` is omitted, it defaults to `backup.service`.
 - `facts` is optional free-form context appended to the facts string (it does not replace run-log capture).
+- Very large logs are clipped in the middle to keep message size bounded.
+- Run logs are included in LLM input facts only; Telegram fallback text stays log-free.
 
 ## Quick Validation
 

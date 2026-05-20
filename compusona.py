@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -25,6 +24,7 @@ TELEGRAM_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
 LLM_TIMEOUT_SECONDS = 8
 TELEGRAM_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 5
+SERVICE_LOG_MAX_CHARS = 3000
 
 DEFAULT_MODEL = "moonshotai/kimi-k2"
 DEFAULT_TEMPERATURE = 0.9
@@ -124,67 +124,87 @@ def _backup_event_service_and_context(
     return service, context
 
 
-def _last_service_log_line(service: str) -> str:
-    out = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
-    return out.splitlines()[-1] if out else "no recent journal line"
+def _service_invocation_id(service: str) -> str:
+    return run_command(
+        ["systemctl", "show", service, "--no-pager", "--property=InvocationID", "--value"]
+    ).strip()
 
 
-def backup_ok_facts(env: dict[str, str], config: dict[str, Any]) -> str:
-    service, extra_context = _backup_event_service_and_context(config, "backup_ok")
-    log_line = _last_service_log_line(service)
-    backup_path = Path(env.get("BACKUP_PATH", "/backup/latest"))
-    try:
-        if not backup_path.exists():
-            parts = [
-                f"Backup success; path {backup_path} was not found for size/count checks.",
-                f"Run log ({service}): {log_line}",
+def _clip_middle(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    marker = "\n... [log truncated] ...\n"
+    keep_each_side = max((max_chars - len(marker)) // 2, 100)
+    return f"{text[:keep_each_side]}{marker}{text[-keep_each_side:]}"
+
+
+def _last_service_run_log(service: str) -> str:
+    invocation_id = _service_invocation_id(service)
+    if invocation_id:
+        out = run_command(
+            [
+                "journalctl",
+                f"_SYSTEMD_INVOCATION_ID={invocation_id}",
+                "--no-pager",
+                "-o",
+                "cat",
             ]
-            if extra_context:
-                parts.append(extra_context)
-            return " ".join(parts)
-        total_bytes = 0
-        file_count = 0
-        for root, _, files in os.walk(backup_path):
-            for name in files:
-                file_count += 1
-                file_path = Path(root) / name
-                try:
-                    total_bytes += file_path.stat().st_size
-                except OSError:
-                    continue
-        size_mb = total_bytes / (1024 * 1024)
-        parts = [
-            f"Backup success: {size_mb:.1f} MB across {file_count} files.",
-            f"Run log ({service}): {log_line}",
+        )
+    else:
+        # Fallback when InvocationID is unavailable: take a larger recent window.
+        out = run_command(
+            ["journalctl", "-u", service, "-n", "200", "--no-pager", "-o", "cat"]
+        )
+
+    lines = [line.rstrip() for line in out.splitlines() if line.strip()]
+    if not lines:
+        return "no recent journal lines"
+    full_log = "\n".join(lines)
+    return _clip_middle(full_log, SERVICE_LOG_MAX_CHARS)
+
+
+def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
+    service, extra_context = _backup_event_service_and_context(config, "backup_ok")
+    run_log = _last_service_run_log(service)
+    try:
+        public_parts = ["Backup success."]
+        llm_parts = [
+            "Backup success.",
+            f"Run log ({service}): {run_log}",
         ]
         if extra_context:
-            parts.append(extra_context)
-        return " ".join(parts)
+            public_parts.append(extra_context)
+            llm_parts.append(extra_context)
+        return " ".join(public_parts), " ".join(llm_parts)
     except Exception:
-        parts = [
-            "Backup success, but size/file count were unavailable.",
-            f"Run log ({service}): {log_line}",
+        public_parts = ["Backup success."]
+        llm_parts = [
+            "Backup success.",
+            f"Run log ({service}): {run_log}",
         ]
         if extra_context:
-            parts.append(extra_context)
-        return " ".join(parts)
+            public_parts.append(extra_context)
+            llm_parts.append(extra_context)
+        return " ".join(public_parts), " ".join(llm_parts)
 
 
-def backup_fail_facts(config: dict[str, Any]) -> str:
+def backup_fail_facts(config: dict[str, Any]) -> tuple[str, str]:
     service, extra_context = _backup_event_service_and_context(config, "backup_fail")
     try:
-        out = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
-        if out:
-            parts = [f"Backup failure. Run log ({service}): {out.splitlines()[-1]}"]
-            if extra_context:
-                parts.append(extra_context)
-            return " ".join(parts)
+        run_log = _last_service_run_log(service)
+        public_parts = ["Backup failure."]
+        llm_parts = [f"Backup failure. Run log ({service}): {run_log}"]
+        if extra_context:
+            public_parts.append(extra_context)
+            llm_parts.append(extra_context)
+        return " ".join(public_parts), " ".join(llm_parts)
     except Exception:
         pass
     parts = [f"Backup failure, and no {service} journal details were available."]
     if extra_context:
         parts.append(extra_context)
-    return " ".join(parts)
+    fallback = " ".join(parts)
+    return fallback, fallback
 
 
 def _service_show_map(service: str) -> dict[str, str]:
@@ -213,7 +233,7 @@ def service_facts(
     success_hint: bool | None = None,
     free_facts: str = "",
     outcome_hint: str = "",
-) -> str:
+) -> tuple[str, str]:
     hint = result_hint.strip().lower()
     if success_hint is True:
         hint = "success"
@@ -225,29 +245,34 @@ def service_facts(
 
     base = free_facts.strip()
     status = _service_show_map(service)
-    last_line = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
-    log_line = last_line.splitlines()[-1] if last_line else "no recent journal line"
+    run_log = _last_service_run_log(service)
 
     active = status.get("ActiveState", "unknown")
     sub = status.get("SubState", "unknown")
     result = status.get("Result", "unknown")
     exit_status = status.get("ExecMainStatus", "unknown")
 
-    parts = [
+    public_parts = [
         f"Service {service}: active={active}, sub={sub}, result={result}, exit={exit_status}.",
-        f"Last log: {log_line}",
+    ]
+    llm_parts = [
+        f"Service {service}: active={active}, sub={sub}, result={result}, exit={exit_status}.",
+        f"Run log: {run_log}",
     ]
     if hint in {"success", "fail", "failed", "any"}:
         normalized_hint = "fail" if hint == "failed" else hint
-        parts.append(f"Expected outcome: {normalized_hint}.")
+        expected = f"Expected outcome: {normalized_hint}."
+        public_parts.append(expected)
+        llm_parts.append(expected)
     if base:
-        parts.append(base)
-    return " ".join(parts)
+        public_parts.append(base)
+        llm_parts.append(base)
+    return " ".join(public_parts), " ".join(llm_parts)
 
 
 def configured_service_facts(
     config: dict[str, Any], event_name: str, outcome_hint: str = ""
-) -> str | None:
+) -> tuple[str, str] | None:
     events_cfg = config.get("events", {})
     if not isinstance(events_cfg, dict):
         return None
@@ -262,7 +287,8 @@ def configured_service_facts(
 
     service = str(event_cfg.get("service", "")).strip()
     if not service:
-        return f"Event '{event_name}' requested type=service but no service name was configured."
+        message = f"Event '{event_name}' requested type=service but no service name was configured."
+        return message, message
 
     result_hint_raw = event_cfg.get("result", "")
     result_hint = result_hint_raw if isinstance(result_hint_raw, str) else ""
@@ -274,7 +300,8 @@ def configured_service_facts(
     try:
         return service_facts(service, result_hint, success_hint, free_facts, outcome_hint)
     except Exception:
-        return f"Service event '{event_name}' for {service} could not gather service facts."
+        message = f"Service event '{event_name}' for {service} could not gather service facts."
+        return message, message
 
 
 def shutdown_facts() -> str:
@@ -339,26 +366,31 @@ def gather_event_facts(
     env: dict[str, str],
     config: dict[str, Any],
     outcome_hint: str = "",
-) -> str:
+) -> tuple[str, str]:
     configured = configured_service_facts(config, event_name, outcome_hint)
     if configured:
         return configured
 
     match event_name:
         case "backup_ok":
-            return backup_ok_facts(env, config)
+            return backup_ok_facts(config)
         case "backup_fail":
             return backup_fail_facts(config)
         case "shutdown":
-            return shutdown_facts()
+            facts = shutdown_facts()
+            return facts, facts
         case "boot":
-            return boot_facts()
+            facts = boot_facts()
+            return facts, facts
         case "updates_available":
-            return updates_available_facts()
+            facts = updates_available_facts()
+            return facts, facts
         case "ups_battery":
-            return ups_battery_facts(env)
+            facts = ups_battery_facts(env)
+            return facts, facts
         case _:
-            return generic_event_facts(event_name)
+            facts = generic_event_facts(event_name)
+            return facts, facts
 
 
 def prompt_suffix_for_event(config: dict[str, Any], event_name: str) -> str:
@@ -487,7 +519,8 @@ def main(argv: list[str]) -> int:
     base_event = argv[1] if len(argv) > 1 else "unknown"
     outcome_hint = argv[2] if len(argv) > 2 else ""
     event_name = base_event
-    facts = generic_event_facts(base_event)
+    telegram_facts = generic_event_facts(base_event)
+    llm_facts = telegram_facts
 
     try:
         env = load_env_file(ENV_PATH)
@@ -495,14 +528,14 @@ def main(argv: list[str]) -> int:
         config = load_config(CONFIG_PATH)
 
         event_name = resolve_event_name(config, base_event, outcome_hint)
-        facts = gather_event_facts(event_name, env, config, outcome_hint)
+        telegram_facts, llm_facts = gather_event_facts(event_name, env, config, outcome_hint)
         suffix = prompt_suffix_for_event(config, event_name)
-        llm_line = generate_llm_line(persona, facts, suffix, config, env)
-        message = llm_line if llm_line else facts
+        llm_line = generate_llm_line(persona, llm_facts, suffix, config, env)
+        message = llm_line if llm_line else telegram_facts
         send_telegram(message, env)
     except Exception as exc:
         log_stderr(f"unexpected error: {exc}")
-        send_telegram(facts, env)
+        send_telegram(telegram_facts, env)
 
     return 0
 
