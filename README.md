@@ -94,6 +94,8 @@ Examples:
 /usr/local/bin/compusona.py boot
 /usr/local/bin/compusona.py updates_available
 /usr/local/bin/compusona.py backup failure
+/usr/local/bin/compusona.py backup_ok
+/usr/local/bin/compusona.py backup_fail
 /usr/local/bin/compusona.py foo
 ```
 
@@ -110,44 +112,30 @@ Unknown events are supported and produce generic facts.
 
 You can also add new event prompt tuning in `/etc/compusona/config.toml` under `[events.<name>]`. If no code handler exists, compusona still runs with generic facts.
 
-## Service-Based Facts From TOML
+## Backup Service Facts From TOML
 
-You can define an event that reads systemd service state and latest journal line, without adding Python code.
+Use `backup_ok` and `backup_fail` tables to control which service log is checked and to append extra context.
 
 Example:
 
 ```toml
-[events.backup]
-type = "service"
+[events.backup_ok]
 service = "mybackup.service"
-result = "success"
 facts = "Nightly backup run completed."
-prompt_suffix = "Celebrate if healthy; call out issues if degraded."
+prompt_suffix = "Treat large backups as a victory."
+
+[events.backup_fail]
+service = "mybackup.service"
+facts = "Nightly backup run failed."
+prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
 ```
 
-Then invoke:
+Behavior:
 
-```bash
-/usr/local/bin/compusona.py backup
-```
-
-Or provide an outcome hint at runtime:
-
-```bash
-/usr/local/bin/compusona.py backup failure
-```
-
-Supported fields inside `[events.<name>]` for service mode:
-
-- `type = "service"` (enables service facts mode)
-- `service = "..."` (required service unit name)
-- `result = "success" | "fail" | "any"` (optional outcome hint)
-- `success = true | false` (optional boolean outcome hint; overrides `result`)
-- CLI outcome argument like `failure` or `success` (overrides both `result` and `success`)
-- `facts = "..."` (optional free-form facts appended to gathered data)
-- `prompt_suffix = "..."` (normal per-event style guidance)
-
-Facts include service state (`ActiveState`, `SubState`, `Result`, `ExecMainStatus`) plus the last `journalctl` line for that unit.
+- `backup_ok` facts include backup size/file count, plus latest `journalctl -u <service> -n 1` line.
+- `backup_fail` facts include failure context plus latest `journalctl -u <service> -n 1` line.
+- If `service` is omitted, it defaults to `backup.service`.
+- `facts` is optional free-form context appended to the facts string (it does not replace run-log capture).
 
 ## Quick Validation
 

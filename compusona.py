@@ -104,11 +104,44 @@ def run_command(args: list[str], timeout: int = COMMAND_TIMEOUT_SECONDS) -> str:
     return (proc.stderr or "").strip()
 
 
-def backup_ok_facts(env: dict[str, str]) -> str:
+def _backup_event_service_and_context(
+    config: dict[str, Any], event_name: str
+) -> tuple[str, str]:
+    events_cfg = config.get("events", {})
+    if not isinstance(events_cfg, dict):
+        return "backup.service", ""
+    event_cfg = events_cfg.get(event_name, {})
+    if not isinstance(event_cfg, dict):
+        return "backup.service", ""
+
+    service_raw = event_cfg.get("service", "backup.service")
+    service = service_raw.strip() if isinstance(service_raw, str) else "backup.service"
+    if not service:
+        service = "backup.service"
+
+    context_raw = event_cfg.get("facts", "")
+    context = context_raw.strip() if isinstance(context_raw, str) else ""
+    return service, context
+
+
+def _last_service_log_line(service: str) -> str:
+    out = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
+    return out.splitlines()[-1] if out else "no recent journal line"
+
+
+def backup_ok_facts(env: dict[str, str], config: dict[str, Any]) -> str:
+    service, extra_context = _backup_event_service_and_context(config, "backup_ok")
+    log_line = _last_service_log_line(service)
     backup_path = Path(env.get("BACKUP_PATH", "/backup/latest"))
     try:
         if not backup_path.exists():
-            return f"Backup succeeded; path {backup_path} was not found for size/count checks."
+            parts = [
+                f"Backup success; path {backup_path} was not found for size/count checks.",
+                f"Run log ({service}): {log_line}",
+            ]
+            if extra_context:
+                parts.append(extra_context)
+            return " ".join(parts)
         total_bytes = 0
         file_count = 0
         for root, _, files in os.walk(backup_path):
@@ -120,19 +153,38 @@ def backup_ok_facts(env: dict[str, str]) -> str:
                 except OSError:
                     continue
         size_mb = total_bytes / (1024 * 1024)
-        return f"Backup completed successfully: {size_mb:.1f} MB across {file_count} files."
+        parts = [
+            f"Backup success: {size_mb:.1f} MB across {file_count} files.",
+            f"Run log ({service}): {log_line}",
+        ]
+        if extra_context:
+            parts.append(extra_context)
+        return " ".join(parts)
     except Exception:
-        return "Backup completed successfully, but size/file count were unavailable."
+        parts = [
+            "Backup success, but size/file count were unavailable.",
+            f"Run log ({service}): {log_line}",
+        ]
+        if extra_context:
+            parts.append(extra_context)
+        return " ".join(parts)
 
 
-def backup_fail_facts() -> str:
+def backup_fail_facts(config: dict[str, Any]) -> str:
+    service, extra_context = _backup_event_service_and_context(config, "backup_fail")
     try:
-        out = run_command(["journalctl", "-u", "backup.service", "-n", "1", "--no-pager"])
+        out = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
         if out:
-            return f"Backup failed. Last backup.service log line: {out.splitlines()[-1]}"
+            parts = [f"Backup failure. Run log ({service}): {out.splitlines()[-1]}"]
+            if extra_context:
+                parts.append(extra_context)
+            return " ".join(parts)
     except Exception:
         pass
-    return "Backup failed, and no backup.service journal details were available."
+    parts = [f"Backup failure, and no {service} journal details were available."]
+    if extra_context:
+        parts.append(extra_context)
+    return " ".join(parts)
 
 
 def _service_show_map(service: str) -> dict[str, str]:
@@ -294,9 +346,9 @@ def gather_event_facts(
 
     match event_name:
         case "backup_ok":
-            return backup_ok_facts(env)
+            return backup_ok_facts(env, config)
         case "backup_fail":
-            return backup_fail_facts()
+            return backup_fail_facts(config)
         case "shutdown":
             return shutdown_facts()
         case "boot":

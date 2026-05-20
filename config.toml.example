@@ -1,11 +1,15 @@
-model = "moonshotai/kimi-k2"
+model = "deepseek/deepseek-v3.2"
 temperature = 0.9
 max_tokens = 80
 
 [events.backup_ok]
+service = "mybackup.service"
+facts = "Nightly backup run completed."
 prompt_suffix = "Treat large backups as a victory."
 
 [events.backup_fail]
+service = "mybackup.service"
+facts = "Nightly backup run failed."
 prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
 
 [events.shutdown]
@@ -19,13 +23,3 @@ prompt_suffix = "Treat pending packages as tasks to be conquered."
 
 [events.ups_battery]
 prompt_suffix = "Ominous, urgent - power reserves failing."
-
-# Optional: TOML-driven service facts for custom events.
-# Run with: /usr/local/bin/compusona.py backup
-[events.backup]
-type = "service"
-service = "mybackup.service"
-# Either set result = "success" | "fail" | "any" OR success = true/false.
-result = "success"
-facts = "Nightly backup run completed."
-prompt_suffix = "Celebrate if healthy; call out issues if degraded."
