@@ -19,3 +19,13 @@ prompt_suffix = "Treat pending packages as tasks to be conquered."
 
 [events.ups_battery]
 prompt_suffix = "Ominous, urgent - power reserves failing."
+
+# Optional: TOML-driven service facts for custom events.
+# Run with: /usr/local/bin/compusona.py backup
+[events.backup]
+type = "service"
+service = "mybackup.service"
+# Either set result = "success" | "fail" | "any" OR success = true/false.
+result = "success"
+facts = "Nightly backup run completed."
+prompt_suffix = "Celebrate if healthy; call out issues if degraded."

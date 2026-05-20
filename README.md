@@ -81,12 +81,19 @@ Run manually:
 /usr/local/bin/compusona.py <event_name>
 ```
 
+Optional outcome suffix:
+
+```bash
+/usr/local/bin/compusona.py <event_name> <outcome>
+```
+
 Examples:
 
 ```bash
 /usr/local/bin/compusona.py shutdown
 /usr/local/bin/compusona.py boot
 /usr/local/bin/compusona.py updates_available
+/usr/local/bin/compusona.py backup failure
 /usr/local/bin/compusona.py foo
 ```
 
@@ -102,6 +109,45 @@ Unknown events are supported and produce generic facts.
 - `ups_battery`
 
 You can also add new event prompt tuning in `/etc/compusona/config.toml` under `[events.<name>]`. If no code handler exists, compusona still runs with generic facts.
+
+## Service-Based Facts From TOML
+
+You can define an event that reads systemd service state and latest journal line, without adding Python code.
+
+Example:
+
+```toml
+[events.backup]
+type = "service"
+service = "mybackup.service"
+result = "success"
+facts = "Nightly backup run completed."
+prompt_suffix = "Celebrate if healthy; call out issues if degraded."
+```
+
+Then invoke:
+
+```bash
+/usr/local/bin/compusona.py backup
+```
+
+Or provide an outcome hint at runtime:
+
+```bash
+/usr/local/bin/compusona.py backup failure
+```
+
+Supported fields inside `[events.<name>]` for service mode:
+
+- `type = "service"` (enables service facts mode)
+- `service = "..."` (required service unit name)
+- `result = "success" | "fail" | "any"` (optional outcome hint)
+- `success = true | false` (optional boolean outcome hint; overrides `result`)
+- CLI outcome argument like `failure` or `success` (overrides both `result` and `success`)
+- `facts = "..."` (optional free-form facts appended to gathered data)
+- `prompt_suffix = "..."` (normal per-event style guidance)
+
+Facts include service state (`ActiveState`, `SubState`, `Result`, `ExecMainStatus`) plus the last `journalctl` line for that unit.
 
 ## Quick Validation
 
@@ -135,7 +181,3 @@ You should see exit code `0`.
 ```bash
 systemctl daemon-reload
 ```
-
-## License
-
-MIT recommended.

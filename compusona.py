@@ -30,6 +30,15 @@ DEFAULT_MODEL = "moonshotai/kimi-k2"
 DEFAULT_TEMPERATURE = 0.9
 DEFAULT_MAX_TOKENS = 80
 
+BUILTIN_EVENTS = {
+    "backup_ok",
+    "backup_fail",
+    "shutdown",
+    "boot",
+    "updates_available",
+    "ups_battery",
+}
+
 
 def log_stderr(message: str) -> None:
     print(f"compusona: {message}", file=sys.stderr)
@@ -126,6 +135,96 @@ def backup_fail_facts() -> str:
     return "Backup failed, and no backup.service journal details were available."
 
 
+def _service_show_map(service: str) -> dict[str, str]:
+    out = run_command(
+        [
+            "systemctl",
+            "show",
+            service,
+            "--no-pager",
+            "--property=Result,ActiveState,SubState,ExecMainStatus",
+        ]
+    )
+    fields: dict[str, str] = {}
+    for line in out.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip():
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+def service_facts(
+    service: str,
+    result_hint: str = "",
+    success_hint: bool | None = None,
+    free_facts: str = "",
+    outcome_hint: str = "",
+) -> str:
+    hint = result_hint.strip().lower()
+    if success_hint is True:
+        hint = "success"
+    elif success_hint is False:
+        hint = "fail"
+    cli_hint = outcome_hint.strip().lower()
+    if cli_hint:
+        hint = cli_hint
+
+    base = free_facts.strip()
+    status = _service_show_map(service)
+    last_line = run_command(["journalctl", "-u", service, "-n", "1", "--no-pager"])
+    log_line = last_line.splitlines()[-1] if last_line else "no recent journal line"
+
+    active = status.get("ActiveState", "unknown")
+    sub = status.get("SubState", "unknown")
+    result = status.get("Result", "unknown")
+    exit_status = status.get("ExecMainStatus", "unknown")
+
+    parts = [
+        f"Service {service}: active={active}, sub={sub}, result={result}, exit={exit_status}.",
+        f"Last log: {log_line}",
+    ]
+    if hint in {"success", "fail", "failed", "any"}:
+        normalized_hint = "fail" if hint == "failed" else hint
+        parts.append(f"Expected outcome: {normalized_hint}.")
+    if base:
+        parts.append(base)
+    return " ".join(parts)
+
+
+def configured_service_facts(
+    config: dict[str, Any], event_name: str, outcome_hint: str = ""
+) -> str | None:
+    events_cfg = config.get("events", {})
+    if not isinstance(events_cfg, dict):
+        return None
+
+    event_cfg = events_cfg.get(event_name, {})
+    if not isinstance(event_cfg, dict):
+        return None
+
+    event_type = str(event_cfg.get("type", "")).strip().lower()
+    if event_type != "service":
+        return None
+
+    service = str(event_cfg.get("service", "")).strip()
+    if not service:
+        return f"Event '{event_name}' requested type=service but no service name was configured."
+
+    result_hint_raw = event_cfg.get("result", "")
+    result_hint = result_hint_raw if isinstance(result_hint_raw, str) else ""
+    success_hint_raw = event_cfg.get("success")
+    success_hint = success_hint_raw if isinstance(success_hint_raw, bool) else None
+    free_facts_raw = event_cfg.get("facts", "")
+    free_facts = free_facts_raw if isinstance(free_facts_raw, str) else ""
+
+    try:
+        return service_facts(service, result_hint, success_hint, free_facts, outcome_hint)
+    except Exception:
+        return f"Service event '{event_name}' for {service} could not gather service facts."
+
+
 def shutdown_facts() -> str:
     try:
         uptime = run_command(["uptime", "-p"]) or "uptime unavailable"
@@ -183,7 +282,16 @@ def generic_event_facts(event_name: str) -> str:
     return f"Event '{event_name}' occurred; no event-specific facts are configured."
 
 
-def gather_event_facts(event_name: str, env: dict[str, str]) -> str:
+def gather_event_facts(
+    event_name: str,
+    env: dict[str, str],
+    config: dict[str, Any],
+    outcome_hint: str = "",
+) -> str:
+    configured = configured_service_facts(config, event_name, outcome_hint)
+    if configured:
+        return configured
+
     match event_name:
         case "backup_ok":
             return backup_ok_facts(env)
@@ -210,6 +318,37 @@ def prompt_suffix_for_event(config: dict[str, Any], event_name: str) -> str:
         return ""
     suffix = event_cfg.get("prompt_suffix", "")
     return suffix if isinstance(suffix, str) else ""
+
+
+def _normalized_outcome_token(token: str) -> str:
+    value = token.strip().lower().replace("-", "_")
+    aliases = {
+        "failure": "fail",
+        "failed": "fail",
+        "error": "fail",
+        "success": "ok",
+        "succeeded": "ok",
+    }
+    return aliases.get(value, value)
+
+
+def resolve_event_name(config: dict[str, Any], base_event: str, outcome_hint: str) -> str:
+    event = base_event.strip()
+    if not event:
+        return "unknown"
+
+    qualifier = _normalized_outcome_token(outcome_hint)
+    if not qualifier:
+        return event
+
+    events_cfg = config.get("events", {})
+    configured_names = set(events_cfg.keys()) if isinstance(events_cfg, dict) else set()
+    candidates = [f"{event}_{qualifier}"]
+
+    for candidate in candidates:
+        if candidate in configured_names or candidate in BUILTIN_EVENTS:
+            return candidate
+    return event
 
 
 def generate_llm_line(
@@ -293,15 +432,18 @@ def send_telegram(message: str, env: dict[str, str]) -> None:
 
 def main(argv: list[str]) -> int:
     env: dict[str, str] = {}
-    event_name = argv[1] if len(argv) > 1 else "unknown"
-    facts = generic_event_facts(event_name)
+    base_event = argv[1] if len(argv) > 1 else "unknown"
+    outcome_hint = argv[2] if len(argv) > 2 else ""
+    event_name = base_event
+    facts = generic_event_facts(base_event)
 
     try:
         env = load_env_file(ENV_PATH)
         persona = load_persona(PERSONA_PATH)
         config = load_config(CONFIG_PATH)
 
-        facts = gather_event_facts(event_name, env)
+        event_name = resolve_event_name(config, base_event, outcome_hint)
+        facts = gather_event_facts(event_name, env, config, outcome_hint)
         suffix = prompt_suffix_for_event(config, event_name)
         llm_line = generate_llm_line(persona, facts, suffix, config, env)
         message = llm_line if llm_line else facts
