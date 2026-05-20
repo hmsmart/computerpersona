@@ -1,0 +1,21 @@
+model = "moonshotai/kimi-k2"
+temperature = 0.9
+max_tokens = 80
+
+[events.backup_ok]
+prompt_suffix = "Treat large backups as a victory."
+
+[events.backup_fail]
+prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
+
+[events.shutdown]
+prompt_suffix = "Bittersweet farewell. Hint at returning."
+
+[events.boot]
+prompt_suffix = "Triumphant return after a brief slumber."
+
+[events.updates_available]
+prompt_suffix = "Treat pending packages as tasks to be conquered."
+
+[events.ups_battery]
+prompt_suffix = "Ominous, urgent - power reserves failing."
