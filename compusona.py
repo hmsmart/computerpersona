@@ -24,7 +24,6 @@ TELEGRAM_URL_TEMPLATE = "https://api.telegram.org/bot{token}/sendMessage"
 LLM_TIMEOUT_SECONDS = 8
 TELEGRAM_TIMEOUT_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 5
-SERVICE_LOG_MAX_CHARS = 3000
 
 DEFAULT_MODEL = "moonshotai/kimi-k2"
 DEFAULT_TEMPERATURE = 0.9
@@ -130,14 +129,6 @@ def _service_invocation_id(service: str) -> str:
     ).strip()
 
 
-def _clip_middle(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
-        return text
-    marker = "\n... [log truncated] ...\n"
-    keep_each_side = max((max_chars - len(marker)) // 2, 100)
-    return f"{text[:keep_each_side]}{marker}{text[-keep_each_side:]}"
-
-
 def _last_service_run_log(service: str) -> str:
     invocation_id = _service_invocation_id(service)
     if invocation_id:
@@ -148,19 +139,25 @@ def _last_service_run_log(service: str) -> str:
                 "--no-pager",
                 "-o",
                 "cat",
+                "-n",
+                "1",
             ]
         )
+        # If InvocationID query returns empty, fallback to recent window
+        if not out.strip():
+            out = run_command(
+                ["journalctl", "-u", service, "-n", "1", "--no-pager", "-o", "cat"]
+            )
     else:
-        # Fallback when InvocationID is unavailable: take a larger recent window.
+        # Fallback when InvocationID is unavailable: take the last line.
         out = run_command(
-            ["journalctl", "-u", service, "-n", "200", "--no-pager", "-o", "cat"]
+            ["journalctl", "-u", service, "-n", "1", "--no-pager", "-o", "cat"]
         )
 
-    lines = [line.rstrip() for line in out.splitlines() if line.strip()]
-    if not lines:
+    line = out.strip()
+    if not line:
         return "no recent journal lines"
-    full_log = "\n".join(lines)
-    return _clip_middle(full_log, SERVICE_LOG_MAX_CHARS)
+    return line
 
 
 def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
