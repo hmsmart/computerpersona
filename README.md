@@ -1,0 +1,141 @@
+# compusona
+
+Give your servers a personality. `compusona` sends in-character host notifications to Telegram, with message text generated through OpenRouter using your persona + event facts.
+
+This repository ships:
+
+- `compusona.py` (single-file stdlib-only script)
+- installable templates for env, config, persona, and systemd units
+- a `Makefile` install target that deploys to system paths
+
+## Features
+
+- Stdlib-only Python implementation (Python 3.11+ for `tomllib`)
+- Event-based facts gathering with graceful fallback defaults
+- OpenRouter LLM generation with raw-facts fallback on any LLM failure
+- Telegram delivery with timeout and stderr-only failure logging
+- Shutdown-safe behavior: script always exits `0`
+
+## Repository Files
+
+- `compusona.py`
+- `env.example`
+- `config.toml.example`
+- `persona.md.example`
+- `compusona-shutdown.service.example`
+- `compusona-boot.service.example`
+- `Makefile`
+
+## Installation
+
+Run as root on the target host:
+
+```bash
+make install
+```
+
+This installs:
+
+- `/usr/local/bin/compusona.py` (0755)
+- `/etc/compusona/env` (0600)
+- `/etc/compusona/config.toml` (0644)
+- `/etc/compusona/persona.md` (0644)
+- `/etc/systemd/system/compusona-shutdown.service` (0644)
+- `/etc/systemd/system/compusona-boot.service` (0644)
+
+Then edit secrets and persona:
+
+```bash
+sudoedit /etc/compusona/env
+sudoedit /etc/compusona/persona.md
+```
+
+Enable services:
+
+```bash
+systemctl enable compusona-shutdown.service compusona-boot.service
+```
+
+## Required Secrets
+
+`/etc/compusona/env` needs at least:
+
+```env
+OPENROUTER_API_KEY=sk-or-v1-...
+TG_TOKEN=...
+TG_CHAT_ID=...
+```
+
+Optional:
+
+```env
+BACKUP_PATH=/backup/latest
+UPS_NAME=myups@localhost
+```
+
+## Usage
+
+Run manually:
+
+```bash
+/usr/local/bin/compusona.py <event_name>
+```
+
+Examples:
+
+```bash
+/usr/local/bin/compusona.py shutdown
+/usr/local/bin/compusona.py boot
+/usr/local/bin/compusona.py updates_available
+/usr/local/bin/compusona.py foo
+```
+
+Unknown events are supported and produce generic facts.
+
+## Supported Events
+
+- `backup_ok`
+- `backup_fail`
+- `shutdown`
+- `boot`
+- `updates_available`
+- `ups_battery`
+
+You can also add new event prompt tuning in `/etc/compusona/config.toml` under `[events.<name>]`. If no code handler exists, compusona still runs with generic facts.
+
+## Quick Validation
+
+Syntax check:
+
+```bash
+python3 -m py_compile compusona.py
+```
+
+Fallback behavior check (no API key):
+
+```bash
+python3 compusona.py foo; echo "Exit code: $?"
+```
+
+You should see exit code `0`.
+
+## Operational Notes
+
+- OpenRouter timeout is 8 seconds.
+- Telegram timeout is 5 seconds.
+- Subprocess fact commands use 5-second timeout.
+- Script never raises a fatal error to caller and always exits `0`.
+
+## Troubleshooting
+
+- If Telegram is not sent, check stderr for missing `TG_TOKEN` or `TG_CHAT_ID`.
+- If LLM generation fails, raw event facts are used automatically.
+- If systemd units changed, run:
+
+```bash
+systemctl daemon-reload
+```
+
+## License
+
+MIT recommended.
