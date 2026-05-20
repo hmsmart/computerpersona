@@ -101,6 +101,25 @@ Examples:
 
 Unknown events are supported and produce generic facts.
 
+## Debug Mode
+
+Use `--debug` to inspect the full LLM input (persona, facts, prompt suffix) before sending:
+
+```bash
+/usr/local/bin/compusona.py --debug backup_ok
+/usr/local/bin/compusona.py backup_fail --debug
+```
+
+Debug output goes to stderr and shows:
+
+- Event name
+- Full persona text
+- Gathered facts (including full service logs for backup/service events)
+- Prompt suffix
+- LLM-generated message or fallback indicator
+
+This is useful for troubleshooting why the LLM may not be seeing expected context (e.g., systemd logs).
+
 ## Supported Events
 
 - `backup_ok`

@@ -516,8 +516,10 @@ def send_telegram(message: str, env: dict[str, str]) -> None:
 
 def main(argv: list[str]) -> int:
     env: dict[str, str] = {}
-    base_event = argv[1] if len(argv) > 1 else "unknown"
-    outcome_hint = argv[2] if len(argv) > 2 else ""
+    debug = "--debug" in argv
+    argv_clean = [arg for arg in argv if arg != "--debug"]
+    base_event = argv_clean[1] if len(argv_clean) > 1 else "unknown"
+    outcome_hint = argv_clean[2] if len(argv_clean) > 2 else ""
     event_name = base_event
     telegram_facts = generic_event_facts(base_event)
     llm_facts = telegram_facts
@@ -530,7 +532,16 @@ def main(argv: list[str]) -> int:
         event_name = resolve_event_name(config, base_event, outcome_hint)
         telegram_facts, llm_facts = gather_event_facts(event_name, env, config, outcome_hint)
         suffix = prompt_suffix_for_event(config, event_name)
+        if debug:
+            log_stderr("=== DEBUG: LLM Input ===")
+            log_stderr(f"Event: {event_name}")
+            log_stderr(f"Persona:\n{persona}\n")
+            log_stderr(f"Facts:\n{llm_facts}\n")
+            log_stderr(f"Prompt suffix:\n{suffix}\n")
         llm_line = generate_llm_line(persona, llm_facts, suffix, config, env)
+        if debug:
+            log_stderr(f"Generated message: {llm_line or '(fallback to telegram facts)'}")
+            log_stderr("=== END DEBUG ===")
         message = llm_line if llm_line else telegram_facts
         send_telegram(message, env)
     except Exception as exc:
