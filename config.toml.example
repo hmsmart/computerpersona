@@ -4,11 +4,16 @@ max_tokens = 80
 
 [events.backup_ok]
 service = "mybackup.service"
+# Read recent journal lines and extract a concise backup summary for facts.
+facts_regex = "(total backup:.*)"
+facts_journal_lines = 3
 facts = "Nightly backup run completed."
-prompt_suffix = "Treat large backups as a victory."
+prompt_suffix = "Treat large backups as a victory. Remain composed."
 
 [events.backup_fail]
 service = "mybackup.service"
+facts_regex = "(total backup:.*)"
+facts_journal_lines = 3
 facts = "Nightly backup run failed."
 prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
 

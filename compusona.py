@@ -123,37 +123,86 @@ def _backup_event_service_and_context(
     return service, context
 
 
+def _backup_event_regex_and_lines(
+    config: dict[str, Any], event_name: str
+) -> tuple[str, int]:
+    events_cfg = config.get("events", {})
+    if not isinstance(events_cfg, dict):
+        return "", 3
+
+    event_cfg = events_cfg.get(event_name, {})
+    if not isinstance(event_cfg, dict):
+        return "", 3
+
+    regex_raw = event_cfg.get("facts_regex", "")
+    regex = regex_raw.strip() if isinstance(regex_raw, str) else ""
+
+    lines_raw = event_cfg.get("facts_journal_lines", 3)
+    lines = lines_raw if isinstance(lines_raw, int) else 3
+    # Keep journal reads bounded and reject invalid values.
+    if lines < 1:
+        lines = 1
+    if lines > 200:
+        lines = 200
+
+    return regex, lines
+
+
 def _service_invocation_id(service: str) -> str:
     return run_command(
         ["systemctl", "show", service, "--no-pager", "--property=InvocationID", "--value"]
     ).strip()
 
 
-def _last_service_run_log(service: str) -> str:
+def _service_recent_journal(service: str, line_count: int = 1) -> str:
     invocation_id = _service_invocation_id(service)
-    if invocation_id:
-        out = run_command(
-            [
-                "journalctl",
-                f"_SYSTEMD_INVOCATION_ID={invocation_id}",
-                "--no-pager",
-                "-o",
-                "cat",
-                "-n",
-                "1",
-            ]
-        )
-        # If InvocationID query returns empty, fallback to recent window
-        if not out.strip():
-            out = run_command(
-                ["journalctl", "-u", service, "-n", "1", "--no-pager", "-o", "cat"]
-            )
-    else:
-        # Fallback when InvocationID is unavailable: take the last line.
-        out = run_command(
-            ["journalctl", "-u", service, "-n", "1", "--no-pager", "-o", "cat"]
-        )
+    journal_args = ["--no-pager", "-o", "cat", "-n", str(line_count)]
 
+    if invocation_id:
+        out = run_command(["journalctl", f"_SYSTEMD_INVOCATION_ID={invocation_id}", *journal_args])
+        # If InvocationID query returns empty, fallback to recent unit lines.
+        if not out.strip():
+            out = run_command(["journalctl", "-u", service, *journal_args])
+    else:
+        # Fallback when InvocationID is unavailable: take recent unit lines.
+        out = run_command(["journalctl", "-u", service, *journal_args])
+
+    return out.strip()
+
+
+def _extract_facts_with_regex(text: str, regex: str) -> str:
+    if not text or not regex:
+        return ""
+    try:
+        pattern = re.compile(regex)
+    except re.error as exc:
+        log_stderr(f"invalid facts_regex '{regex}': {exc}")
+        return ""
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # Search from newest to oldest so we prefer the latest matching line.
+    for line in reversed(lines):
+        match = pattern.search(line)
+        if not match:
+            continue
+        if match.lastindex:
+            captured = match.group(1)
+            if isinstance(captured, str) and captured.strip():
+                return " ".join(captured.split())
+        return " ".join(match.group(0).split())
+    return ""
+
+
+def _backup_dynamic_facts(config: dict[str, Any], event_name: str, service: str) -> str:
+    regex, line_count = _backup_event_regex_and_lines(config, event_name)
+    if not regex:
+        return ""
+    recent = _service_recent_journal(service, line_count)
+    return _extract_facts_with_regex(recent, regex)
+
+
+def _last_service_run_log(service: str) -> str:
+    out = _service_recent_journal(service, 1)
     line = out.strip()
     if not line:
         return "no recent journal lines"
@@ -163,12 +212,16 @@ def _last_service_run_log(service: str) -> str:
 def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
     service, extra_context = _backup_event_service_and_context(config, "backup_ok")
     run_log = _last_service_run_log(service)
+    dynamic_facts = _backup_dynamic_facts(config, "backup_ok", service)
     try:
         public_parts = ["Backup success."]
         llm_parts = [
             "Backup success.",
             f"Run log ({service}): {run_log}",
         ]
+        if dynamic_facts:
+            public_parts.append(dynamic_facts)
+            llm_parts.append(f"Extracted facts: {dynamic_facts}")
         if extra_context:
             public_parts.append(extra_context)
             llm_parts.append(extra_context)
@@ -179,6 +232,9 @@ def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
             "Backup success.",
             f"Run log ({service}): {run_log}",
         ]
+        if dynamic_facts:
+            public_parts.append(dynamic_facts)
+            llm_parts.append(f"Extracted facts: {dynamic_facts}")
         if extra_context:
             public_parts.append(extra_context)
             llm_parts.append(extra_context)
@@ -187,10 +243,14 @@ def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
 
 def backup_fail_facts(config: dict[str, Any]) -> tuple[str, str]:
     service, extra_context = _backup_event_service_and_context(config, "backup_fail")
+    dynamic_facts = _backup_dynamic_facts(config, "backup_fail", service)
     try:
         run_log = _last_service_run_log(service)
         public_parts = ["Backup failure."]
         llm_parts = [f"Backup failure. Run log ({service}): {run_log}"]
+        if dynamic_facts:
+            public_parts.append(dynamic_facts)
+            llm_parts.append(f"Extracted facts: {dynamic_facts}")
         if extra_context:
             public_parts.append(extra_context)
             llm_parts.append(extra_context)

@@ -140,23 +140,28 @@ Example:
 ```toml
 [events.backup_ok]
 service = "mybackup.service"
+facts_regex = "(total backup:.*)"
+facts_journal_lines = 3
 facts = "Nightly backup run completed."
 prompt_suffix = "Treat large backups as a victory."
 
 [events.backup_fail]
 service = "mybackup.service"
+facts_regex = "(total backup:.*)"
+facts_journal_lines = 3
 facts = "Nightly backup run failed."
 prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
 ```
 
 Behavior:
 
-- `backup_ok` and `backup_fail` include logs from the full latest service run (start to finish) using the current systemd `InvocationID` when available.
-- If `InvocationID` is unavailable, compusona falls back to a recent `journalctl -u <service>` window.
+- `facts_regex` (optional) is applied to recent journal output for that event.
+- `facts_journal_lines` (optional, default `3`) controls how many recent lines are searched.
+- If `facts_regex` has a capture group, group 1 is used as extracted facts; otherwise the full regex match is used.
+- Regex search is performed from newest line to oldest line.
 - If `service` is omitted, it defaults to `backup.service`.
-- `facts` is optional free-form context appended to the facts string (it does not replace run-log capture).
-- Very large logs are clipped in the middle to keep message size bounded.
-- Run logs are included in LLM input facts only; Telegram fallback text stays log-free.
+- `facts` is optional free-form context appended to the facts string.
+- The latest log line is still included in LLM facts as backup context.
 
 ## Quick Validation
 
