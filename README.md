@@ -148,7 +148,7 @@ prompt_suffix = "Treat large backups as a victory."
 [events.backup_fail]
 service = "mybackup.service"
 facts_regex = "(total backup:.*)"
-facts_journal_lines = 3
+facts_journal_lines = 5
 facts = "Nightly backup run failed."
 prompt_suffix = "Express frustration but stay in character. Imply you'll try again."
 ```
@@ -156,12 +156,13 @@ prompt_suffix = "Express frustration but stay in character. Imply you'll try aga
 Behavior:
 
 - `facts_regex` (optional) is applied to recent journal output for that event.
-- `facts_journal_lines` (optional, default `3`) controls how many recent lines are searched.
+- `facts_journal_lines` (optional) controls how many recent lines are searched (`3` default for `backup_ok`, `5` default for `backup_fail`).
 - If `facts_regex` has a capture group, group 1 is used as extracted facts; otherwise the full regex match is used.
 - Regex search is performed from newest line to oldest line.
+- Journal reads target the most recent service invocation via systemd `InvocationID` when available.
 - If `service` is omitted, it defaults to `backup.service`.
 - `facts` is optional free-form context appended to the facts string.
-- The latest log line is still included in LLM facts as backup context.
+- `backup_fail` includes a multi-line run-log excerpt in LLM facts (last `facts_journal_lines`, default `5`).
 
 ## Quick Validation
 

@@ -124,21 +124,21 @@ def _backup_event_service_and_context(
 
 
 def _backup_event_regex_and_lines(
-    config: dict[str, Any], event_name: str
+    config: dict[str, Any], event_name: str, default_lines: int = 3
 ) -> tuple[str, int]:
     events_cfg = config.get("events", {})
     if not isinstance(events_cfg, dict):
-        return "", 3
+        return "", default_lines
 
     event_cfg = events_cfg.get(event_name, {})
     if not isinstance(event_cfg, dict):
-        return "", 3
+        return "", default_lines
 
     regex_raw = event_cfg.get("facts_regex", "")
     regex = regex_raw.strip() if isinstance(regex_raw, str) else ""
 
-    lines_raw = event_cfg.get("facts_journal_lines", 3)
-    lines = lines_raw if isinstance(lines_raw, int) else 3
+    lines_raw = event_cfg.get("facts_journal_lines", default_lines)
+    lines = lines_raw if isinstance(lines_raw, int) else default_lines
     # Keep journal reads bounded and reject invalid values.
     if lines < 1:
         lines = 1
@@ -193,12 +193,22 @@ def _extract_facts_with_regex(text: str, regex: str) -> str:
     return ""
 
 
-def _backup_dynamic_facts(config: dict[str, Any], event_name: str, service: str) -> str:
-    regex, line_count = _backup_event_regex_and_lines(config, event_name)
+def _backup_dynamic_facts(
+    config: dict[str, Any], event_name: str, service: str, default_lines: int = 3
+) -> str:
+    regex, line_count = _backup_event_regex_and_lines(config, event_name, default_lines)
     if not regex:
         return ""
     recent = _service_recent_journal(service, line_count)
     return _extract_facts_with_regex(recent, regex)
+
+
+def _backup_log_excerpt(
+    config: dict[str, Any], event_name: str, service: str, default_lines: int
+) -> str:
+    _, line_count = _backup_event_regex_and_lines(config, event_name, default_lines)
+    excerpt = _service_recent_journal(service, line_count)
+    return excerpt if excerpt else "no recent journal lines"
 
 
 def _last_service_run_log(service: str) -> str:
@@ -212,7 +222,7 @@ def _last_service_run_log(service: str) -> str:
 def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
     service, extra_context = _backup_event_service_and_context(config, "backup_ok")
     run_log = _last_service_run_log(service)
-    dynamic_facts = _backup_dynamic_facts(config, "backup_ok", service)
+    dynamic_facts = _backup_dynamic_facts(config, "backup_ok", service, default_lines=3)
     try:
         public_parts = ["Backup success."]
         llm_parts = [
@@ -243,9 +253,9 @@ def backup_ok_facts(config: dict[str, Any]) -> tuple[str, str]:
 
 def backup_fail_facts(config: dict[str, Any]) -> tuple[str, str]:
     service, extra_context = _backup_event_service_and_context(config, "backup_fail")
-    dynamic_facts = _backup_dynamic_facts(config, "backup_fail", service)
+    dynamic_facts = _backup_dynamic_facts(config, "backup_fail", service, default_lines=5)
     try:
-        run_log = _last_service_run_log(service)
+        run_log = _backup_log_excerpt(config, "backup_fail", service, default_lines=5)
         public_parts = ["Backup failure."]
         llm_parts = [f"Backup failure. Run log ({service}): {run_log}"]
         if dynamic_facts:
