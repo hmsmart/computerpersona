@@ -4,7 +4,7 @@ Give your servers a personality. `compusona` sends in-character host notificatio
 
 This repository ships:
 
-- `compusona.py` (single-file stdlib-only script)
+- `compusona` (single-file stdlib-only script with shebang)
 - installable templates for env, config, persona, and systemd units
 - a `Makefile` install target that deploys to system paths
 
@@ -18,7 +18,7 @@ This repository ships:
 
 ## Repository Files
 
-- `compusona.py`
+- `compusona`
 - `env.example`
 - `config.toml.example`
 - `persona.md.example`
@@ -36,7 +36,7 @@ make install
 
 This installs:
 
-- `/usr/local/bin/compusona.py` (0755)
+- `/usr/local/bin/compusona` (0755)
 - `/etc/compusona/env` (0600)
 - `/etc/compusona/config.toml` (0644)
 - `/etc/compusona/persona.md` (0644)
@@ -78,25 +78,25 @@ UPS_NAME=myups@localhost
 Run manually:
 
 ```bash
-/usr/local/bin/compusona.py <event_name>
+/usr/local/bin/compusona <event_name>
 ```
 
 Optional outcome suffix:
 
 ```bash
-/usr/local/bin/compusona.py <event_name> <outcome>
+/usr/local/bin/compusona <event_name> <outcome>
 ```
 
 Examples:
 
 ```bash
-/usr/local/bin/compusona.py shutdown
-/usr/local/bin/compusona.py boot
-/usr/local/bin/compusona.py updates_available
-/usr/local/bin/compusona.py backup failure
-/usr/local/bin/compusona.py backup_ok
-/usr/local/bin/compusona.py backup_fail
-/usr/local/bin/compusona.py foo
+/usr/local/bin/compusona shutdown
+/usr/local/bin/compusona boot
+/usr/local/bin/compusona updates_available
+/usr/local/bin/compusona backup failure
+/usr/local/bin/compusona backup_ok
+/usr/local/bin/compusona backup_fail
+/usr/local/bin/compusona foo
 ```
 
 Unknown events are supported and produce generic facts.
@@ -106,8 +106,8 @@ Unknown events are supported and produce generic facts.
 Use `--debug` to inspect the full LLM input (persona, facts, prompt suffix) before sending:
 
 ```bash
-/usr/local/bin/compusona.py --debug backup_ok
-/usr/local/bin/compusona.py backup_fail --debug
+/usr/local/bin/compusona --debug backup_ok
+/usr/local/bin/compusona backup_fail --debug
 ```
 
 Debug output goes to stderr and shows:
@@ -128,6 +128,14 @@ This is useful for troubleshooting why the LLM may not be seeing expected contex
 - `boot`
 - `updates_available`
 - `ups_battery`
+- `ups_on_battery` (alias: `ONBATT` / `onbatt`)
+- `ups_online` (alias: `ONLINE` / `online`)
+- `ups_forced_shutdown` (alias: `FSD` / `fsd`)
+- `ups_comm_bad` (alias: `COMMBAD` / `commbad`)
+- `ups_comm_ok` (alias: `COMMOK` / `commok`)
+- `ups_replace_battery` (alias: `REPLBATT` / `replbatt`)
+
+`LOWBATT` / `lowbatt` map to `ups_battery`.
 
 You can also add new event prompt tuning in `/etc/compusona/config.toml` under `[events.<name>]`. If no code handler exists, compusona still runs with generic facts.
 
@@ -169,13 +177,13 @@ Behavior:
 Syntax check:
 
 ```bash
-python3 -m py_compile compusona.py
+python3 -m py_compile compusona
 ```
 
 Fallback behavior check (no API key):
 
 ```bash
-python3 compusona.py foo; echo "Exit code: $?"
+./compusona foo; echo "Exit code: $?"
 ```
 
 You should see exit code `0`.

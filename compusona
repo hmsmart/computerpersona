@@ -36,6 +36,22 @@ BUILTIN_EVENTS = {
     "boot",
     "updates_available",
     "ups_battery",
+    "ups_on_battery",
+    "ups_online",
+    "ups_forced_shutdown",
+    "ups_comm_bad",
+    "ups_comm_ok",
+    "ups_replace_battery",
+}
+
+NUT_EVENT_ALIASES = {
+    "onbatt": "ups_on_battery",
+    "online": "ups_online",
+    "lowbatt": "ups_battery",
+    "fsd": "ups_forced_shutdown",
+    "commbad": "ups_comm_bad",
+    "commok": "ups_comm_ok",
+    "replbatt": "ups_replace_battery",
 }
 
 
@@ -413,15 +429,101 @@ def updates_available_facts() -> str:
 
 
 def ups_battery_facts(env: dict[str, str]) -> str:
-    ups_name = env.get("UPS_NAME", "").strip()
+    ups_name = _ups_name(env)
     if not ups_name:
         return "UPS alert: UPS_NAME is not set, battery charge/runtime are unknown."
     try:
-        charge = run_command(["upsc", ups_name, "battery.charge"]) or "unknown"
-        runtime = run_command(["upsc", ups_name, "battery.runtime"]) or "unknown"
-        return f"UPS battery warning for {ups_name}: charge {charge}, runtime {runtime} seconds."
+        _, status, charge, runtime = _ups_snapshot(env)
+        return (
+            f"UPS battery warning for {ups_name}: status {status}, "
+            f"charge {charge}, runtime {runtime} seconds."
+        )
     except Exception:
         return f"UPS battery warning for {ups_name}: charge/runtime details unavailable."
+
+
+def _ups_name(env: dict[str, str]) -> str:
+    return env.get("UPS_NAME", "").strip()
+
+
+def _ups_snapshot(env: dict[str, str]) -> tuple[str, str, str, str]:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "", "unknown", "unknown", "unknown"
+    status = run_command(["upsc", ups_name, "ups.status"]) or "unknown"
+    charge = run_command(["upsc", ups_name, "battery.charge"]) or "unknown"
+    runtime = run_command(["upsc", ups_name, "battery.runtime"]) or "unknown"
+    return ups_name, status, charge, runtime
+
+
+def ups_on_battery_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS switched to battery power, but UPS_NAME is not set."
+    try:
+        _, status, charge, runtime = _ups_snapshot(env)
+        return (
+            f"UPS {ups_name} is on battery: status {status}, "
+            f"charge {charge}, runtime {runtime} seconds."
+        )
+    except Exception:
+        return f"UPS {ups_name} is on battery; charge/runtime details unavailable."
+
+
+def ups_online_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS power restored, but UPS_NAME is not set."
+    try:
+        _, status, charge, runtime = _ups_snapshot(env)
+        return (
+            f"UPS {ups_name} returned online: status {status}, "
+            f"charge {charge}, runtime {runtime} seconds."
+        )
+    except Exception:
+        return f"UPS {ups_name} returned online; telemetry unavailable."
+
+
+def ups_forced_shutdown_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS forced shutdown (FSD) signaled, but UPS_NAME is not set."
+    try:
+        _, status, charge, runtime = _ups_snapshot(env)
+        return (
+            f"UPS {ups_name} forced shutdown (FSD): status {status}, "
+            f"charge {charge}, runtime {runtime} seconds."
+        )
+    except Exception:
+        return f"UPS {ups_name} forced shutdown (FSD) signaled; telemetry unavailable."
+
+
+def ups_comm_bad_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS communication lost (COMMBAD), but UPS_NAME is not set."
+    return f"UPS communication lost with {ups_name} (COMMBAD)."
+
+
+def ups_comm_ok_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS communication restored (COMMOK), but UPS_NAME is not set."
+    return f"UPS communication restored with {ups_name} (COMMOK)."
+
+
+def ups_replace_battery_facts(env: dict[str, str]) -> str:
+    ups_name = _ups_name(env)
+    if not ups_name:
+        return "UPS battery replacement requested (REPLBATT), but UPS_NAME is not set."
+    try:
+        _, status, charge, runtime = _ups_snapshot(env)
+        return (
+            f"UPS {ups_name} requested battery replacement (REPLBATT): "
+            f"status {status}, charge {charge}, runtime {runtime} seconds."
+        )
+    except Exception:
+        return f"UPS {ups_name} requested battery replacement (REPLBATT)."
 
 
 def generic_event_facts(event_name: str) -> str:
@@ -454,6 +556,24 @@ def gather_event_facts(
             return facts, facts
         case "ups_battery":
             facts = ups_battery_facts(env)
+            return facts, facts
+        case "ups_on_battery":
+            facts = ups_on_battery_facts(env)
+            return facts, facts
+        case "ups_online":
+            facts = ups_online_facts(env)
+            return facts, facts
+        case "ups_forced_shutdown":
+            facts = ups_forced_shutdown_facts(env)
+            return facts, facts
+        case "ups_comm_bad":
+            facts = ups_comm_bad_facts(env)
+            return facts, facts
+        case "ups_comm_ok":
+            facts = ups_comm_ok_facts(env)
+            return facts, facts
+        case "ups_replace_battery":
+            facts = ups_replace_battery_facts(env)
             return facts, facts
         case _:
             facts = generic_event_facts(event_name)
@@ -500,6 +620,25 @@ def resolve_event_name(config: dict[str, Any], base_event: str, outcome_hint: st
         if candidate in configured_names or candidate in BUILTIN_EVENTS:
             return candidate
     return event
+
+
+def normalize_event_name(config: dict[str, Any], raw_event: str) -> str:
+    event = raw_event.strip()
+    if not event:
+        return "unknown"
+
+    events_cfg = config.get("events", {})
+    configured_names = set(events_cfg.keys()) if isinstance(events_cfg, dict) else set()
+
+    # Preserve exact configured key names first.
+    if event in configured_names:
+        return event
+
+    lowered = event.lower()
+    if lowered in configured_names:
+        return lowered
+
+    return NUT_EVENT_ALIASES.get(lowered, lowered)
 
 
 def generate_llm_line(
@@ -585,10 +724,10 @@ def main(argv: list[str]) -> int:
     env: dict[str, str] = {}
     debug = "--debug" in argv
     argv_clean = [arg for arg in argv if arg != "--debug"]
-    base_event = argv_clean[1] if len(argv_clean) > 1 else "unknown"
+    raw_event = argv_clean[1] if len(argv_clean) > 1 else "unknown"
     outcome_hint = argv_clean[2] if len(argv_clean) > 2 else ""
-    event_name = base_event
-    telegram_facts = generic_event_facts(base_event)
+    event_name = raw_event
+    telegram_facts = generic_event_facts(raw_event)
     llm_facts = telegram_facts
 
     try:
@@ -596,6 +735,7 @@ def main(argv: list[str]) -> int:
         persona = load_persona(PERSONA_PATH)
         config = load_config(CONFIG_PATH)
 
+        base_event = normalize_event_name(config, raw_event)
         event_name = resolve_event_name(config, base_event, outcome_hint)
         telegram_facts, llm_facts = gather_event_facts(event_name, env, config, outcome_hint)
         suffix = prompt_suffix_for_event(config, event_name)

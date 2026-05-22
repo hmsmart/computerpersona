@@ -7,7 +7,7 @@ SYSTEMD_DIR := $(PREFIX)etc/systemd/system
 .PHONY: install
 install:
 	install -d $(BIN_DIR) $(ETC_DIR) $(SYSTEMD_DIR)
-	install -m 0755 compusona.py $(BIN_DIR)/compusona.py
+	install -m 0755 compusona $(BIN_DIR)/compusona
 	install -m 0600 env.example $(ETC_DIR)/env
 	install -m 0644 config.toml.example $(ETC_DIR)/config.toml
 	install -m 0644 persona.md.example $(ETC_DIR)/persona.md

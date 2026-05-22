@@ -24,7 +24,7 @@ You get one that says whatever your persona file tells it to say, with the numbe
 ## File layout
 
 ```
-/usr/local/bin/compusona.py              # the script (0755, root:root)
+/usr/local/bin/compusona                 # the script (0755, root:root)
 /etc/compusona/persona.md                # system prompt; character description
 /etc/compusona/config.toml               # model, temperature, per-event prompt tuning
 /etc/compusona/env                       # secrets (0600, root:root)
@@ -102,12 +102,12 @@ or "You are a cheerful golden retriever who happens to administer Linux systems.
 
 ---
 
-## Script: `/usr/local/bin/compusona.py`
+## Script: `/usr/local/bin/compusona`
 
 ### Invocation
 
 ```
-compusona.py <event_name>
+compusona <event_name>
 ```
 
 Where `<event_name>` matches a key under `[events.*]` in `config.toml`. Unknown event names should still produce a reasonable notification using the persona and a generic fact string.
@@ -170,7 +170,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/bin/true
-ExecStop=/usr/local/bin/compusona.py shutdown
+ExecStop=/usr/local/bin/compusona shutdown
 RemainAfterExit=yes
 TimeoutStopSec=15
 
@@ -190,7 +190,7 @@ Requires=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/compusona.py boot
+ExecStart=/usr/local/bin/compusona boot
 
 [Install]
 WantedBy=multi-user.target
@@ -200,14 +200,14 @@ WantedBy=multi-user.target
 
 ## Acceptance criteria
 
-1. Running `compusona.py shutdown` on the command line as root produces a Telegram message within ~10 seconds, even with no network (falls back to raw facts).
+1. Running `compusona shutdown` on the command line as root produces a Telegram message within ~10 seconds, even with no network (falls back to raw facts).
 2. Pointing `OPENROUTER_API_KEY` at a bad value still produces a Telegram message containing the raw facts.
 3. `systemctl start compusona-shutdown.service` succeeds and does nothing visible. `systemctl stop compusona-shutdown.service` triggers the shutdown notification.
 4. A clean `systemctl poweroff` triggers the notification before network teardown.
 5. Editing `/etc/compusona/persona.md` changes the message style on the next run with no script changes.
 6. Adding a new `[events.foo]` table to `config.toml` and invoking with `foo` produces a notification (using generic facts) without code changes.
 7. Script exits 0 in all observed code paths.
-8. `python3 -m py_compile /usr/local/bin/compusona.py` passes with no warnings on Python 3.12.
+8. `python3 -m py_compile /usr/local/bin/compusona` passes with no warnings on Python 3.12.
 
 ---
 

@@ -1,6 +1,6 @@
 model = "deepseek/deepseek-v3.2"
 temperature = 0.9
-max_tokens = 80
+max_tokens = 160
 
 [events.backup_ok]
 service = "mybackup.service"
@@ -28,3 +28,21 @@ prompt_suffix = "Treat pending packages as tasks to be conquered."
 
 [events.ups_battery]
 prompt_suffix = "Ominous, urgent - power reserves failing."
+
+[events.ups_on_battery]
+prompt_suffix = "Immediate alert tone. Grid power is gone; stay calm and actionable."
+
+[events.ups_online]
+prompt_suffix = "Relieved recovery tone. Mains power has returned; acknowledge stabilization."
+
+[events.ups_forced_shutdown]
+prompt_suffix = "Critical, final warning tone. Imminent shutdown from UPS forced state."
+
+[events.ups_comm_bad]
+prompt_suffix = "Concerned diagnostic tone. Communication with UPS is lost; call out uncertainty."
+
+[events.ups_comm_ok]
+prompt_suffix = "Steady reassurance. UPS communication has recovered; confidence restored."
+
+[events.ups_replace_battery]
+prompt_suffix = "Maintenance reminder tone. Battery replacement is due; urgent but not panicked."
